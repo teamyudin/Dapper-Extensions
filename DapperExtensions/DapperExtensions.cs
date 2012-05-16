@@ -2,8 +2,10 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.Dynamic;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using Dapper;
 using DapperExtensions.Sql;
@@ -13,7 +15,6 @@ namespace DapperExtensions
 {
     public static class DapperExtensions
     {
-        //git commit test
         private readonly static object _lock = new object();
 
         private static Type _defaultMapper;
@@ -436,19 +437,12 @@ namespace DapperExtensions
                 IClassMapper map;
                 if (!_classMaps.TryGetValue(entityType, out map))
                 {
-                    Type[] types = entityType.Assembly.GetTypes();
-                    Type mapType = (from type in types
-                                    let interfaceType = type.GetInterface(typeof(IClassMapper<>).FullName)
-                                    where interfaceType != null && interfaceType.GetGenericArguments()[0] == entityType
-                                    select type).SingleOrDefault();
-
+                    var mapType = GetCustomMapTypeFromEntity<T>();
                     if (mapType == null)
-                    {
-                        mapType = _defaultMapper.MakeGenericType(typeof(T));
-                    }
+                        mapType = GetCustomMapTypeFromCallStack<T>() ?? _defaultMapper.MakeGenericType(typeof(T));
 
                     map = Activator.CreateInstance(mapType) as IClassMapper;
-                    _classMaps[entityType] = map;
+                    _classMaps[typeof(T)] = map;
                 }
 
                 return map;
@@ -484,6 +478,48 @@ namespace DapperExtensions
                 }
 
                 return _simpleTypes.Contains(actualType);
+            }
+
+            private Type GetCustomMapTypeFromCallStack<T>() where T : class
+            {
+                var interfaceType = typeof(IClassMapper<T>);
+                var stackTrace = new StackTrace();
+                var stackFrames = stackTrace.GetFrames();
+                var scannedAssemblies = new Dictionary<string, bool>
+                                            {
+                                                {Assembly.GetExecutingAssembly().FullName, true}
+                                            };
+
+                if (stackFrames != null)
+                    foreach (var stackFrame in stackFrames)
+                    {
+                        var stackFrameAssembly = stackFrame.GetMethod().DeclaringType.Assembly;
+                        if (scannedAssemblies.ContainsKey(stackFrameAssembly.FullName))
+                            continue;
+                        foreach (var type in stackFrameAssembly.GetTypes())
+                        {
+                            if (interfaceType.IsAssignableFrom(type))
+                            {
+                                return type;
+                            }
+                        }
+                        scannedAssemblies.Add(stackFrameAssembly.FullName, true);
+                    }
+
+                return null;
+            }
+
+            private Type GetCustomMapTypeFromEntity<T>() where T : class
+            {
+                Type entityType = typeof(T);
+                Type[] types = entityType.Assembly.GetTypes();
+
+                Type customMapType = (from type in types
+                                      let interfaceType = type.GetInterface(typeof(IClassMapper<>).FullName)
+                                      where interfaceType != null && interfaceType.GetGenericArguments()[0] == entityType
+                                      select type).SingleOrDefault();
+
+                return customMapType;
             }
         }
     }
