@@ -13,6 +13,7 @@ namespace DapperExtensions
 {
     public static class DapperExtensions
     {
+        //git commit test
         private readonly static object _lock = new object();
 
         private static Type _defaultMapper;
